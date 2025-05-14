@@ -1,0 +1,187 @@
+---
+title: 'dailyexercise27-28'
+author: 'Brittany Bobb'
+date: '2025-05-13'
+format: 
+    html:
+      self-contained: true
+execute:
+  echo: true
+editor: source
+---
+```{r}
+library(sf)
+library(osmdata)
+library(terra)
+library(dplyr)
+```
+
+```{r}
+# Define the bounding box for Fort Collins
+fc_bbox <- getbb("Fort Collins, Colorado")
+
+# Get OSM data for all waterways in the bounding box
+fc_osm <- opq(bbox = fc_bbox) %>%
+  add_osm_feature(key = "waterway") %>%
+  osmdata_sf()
+
+```
+
+```{r}
+# Filter the lines for Cache la Poudre River
+poudre <- fc_osm$osm_lines %>%
+  filter(grepl("Cache la Poudre", name, ignore.case = TRUE))
+
+```
+
+```{r}
+# Merge into a single line object
+poudre_merged <- st_union(poudre)
+
+# Convert to sf object
+poudre_sf <- st_as_sf(poudre_merged)
+
+```
+
+```{r}
+# Make sure it has a valid CRS for length calculation
+poudre_sf <- st_transform(poudre_sf, 32613)  # UTM zone 13N for CO
+
+# Calculate length in meters
+poudre_length <- st_length(poudre_sf)
+print(poudre_length)
+
+```
+```{r}
+# Convert to POINT geometry for later use
+poudre_pts <- st_cast(poudre_sf, "POINT")
+
+```
+
+```{r}
+#
+#
+#DEFINE DEM OBJECT
+#
+#
+```
+
+```{r}
+library(terra)
+url <- 'https://raw.githubusercontent.com/mikejohnson51/csu-ess-330/a993e03df117a76c609ff4c018055f8c821a6de9/resources/foco-elev.tif'
+
+rast(glue::glue("/vsicurl/{url}"))
+# Set anonymous (no sign) access for AWS S3
+Sys.setenv("AWS_NO_SIGN_REQUEST" = "YES")
+
+# Now try reading the DEM
+dem <- rast("/vsis3/lynker-spatial/gridded-resources/dem.vrt")
+
+```
+
+```{r}
+#
+#
+#EXTRACT RIVER PROFILE 
+#
+#
+```
+
+```{r}
+# Extract elevation from DEM at river points
+elevation_vals <- extract(dem, vect(poudre_pts))
+
+```
+
+```{r}
+library(tibble)
+library(dplyr)
+
+# Combine elevation with river point geometries
+poudre_with_elev <- bind_cols(poudre_pts, elevation_vals)
+
+# Add ID column from 1 to n
+poudre_with_elev <- poudre_with_elev %>%
+  mutate(ID = 1:n())
+
+```
+
+```{r}
+#
+#
+#COMPUTE SINUOSITY
+#
+#
+```
+
+```{r}
+# Start and end points
+start_pt <- st_geometry(poudre_pts)[[1]]
+end_pt <- st_geometry(poudre_pts)[[length(poudre_pts)]]
+
+# Compute straight line distance (in meters)
+straight_dist <- st_distance(start_pt, end_pt)
+
+```
+
+```{r}
+# Already computed earlier
+# poudre_length <- st_length(poudre_sf)
+
+# Sinuosity = river length / straight-line distance
+sinuosity <- as.numeric(poudre_length) / as.numeric(straight_dist)
+print(sinuosity)
+
+```
+
+```{r}
+#
+#
+#COMPUTE RIVER SLOPE
+#
+#
+```
+
+```{r}
+# Get elevation of first and last points (in cm)
+elev_start <- poudre_with_elev$dem[1]
+elev_end <- poudre_with_elev$dem[nrow(poudre_with_elev)]
+
+# Convert to meters
+elev_change_m <- (elev_start - elev_end) / 100
+
+```
+
+```{r}
+# River length is already in meters
+slope <- elev_change_m / as.numeric(poudre_length)
+print(slope)
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(poudre_with_elev, aes(x = ID, y = dem)) +
+  geom_line(color = "#1b9e77", size = 1) +
+  labs(
+    title = "Elevation Profile of Cache la Poudre River",
+    x = "Point ID Along River",
+    y = "Elevation (cm)"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+```{r}
+ggplot(poudre_with_elev) +
+  geom_sf(aes(color = dem), size = 0.7) +
+  scale_color_viridis_c(option = "plasma", name = "Elevation (cm)") +
+  labs(
+    title = "Spatial Map of Cache la Poudre River Profile",
+    subtitle = "Elevation Gradient Through Fort Collins"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
