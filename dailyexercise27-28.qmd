@@ -14,6 +14,7 @@ library(sf)
 library(osmdata)
 library(terra)
 library(dplyr)
+
 ```
 
 ```{r}
